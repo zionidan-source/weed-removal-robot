@@ -1,0 +1,9 @@
+# UR5 Control Node parameters
+ur5_node:
+  ros__parameters:
+    # Your UR5's IP address on the network
+    robot_ip: "192.168.1.100"
+
+    # Motion parameters
+    move_speed: 0.25          # m/s
+    move_acceleration: 0.5    # m/s²

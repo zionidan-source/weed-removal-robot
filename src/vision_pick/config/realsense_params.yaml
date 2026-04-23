@@ -1,0 +1,30 @@
+# RealSense D435i configuration for vision_pick
+realsense_camera:
+  ros__parameters:
+    # ----- Stream config -----
+    enable_color: true
+    enable_depth: true
+    enable_infra1: false
+    enable_infra2: false
+    enable_gyro: false
+    enable_accel: false
+
+    # ----- Resolution & FPS -----
+    rgb_camera.color_profile: "1280x720x30"
+    depth_module.depth_profile: "1280x720x30"
+
+    # ----- Depth -> Color alignment -----
+    align_depth.enable: true
+
+    # ----- Point cloud OFF -----
+    pointcloud.enable: false
+
+    # ----- Post-processing filters for cleaner depth -----
+    decimation_filter.enable: false
+    spatial_filter.enable: true
+    temporal_filter.enable: true
+    hole_filling_filter.enable: true
+
+    # ----- Auto-exposure -----
+    rgb_camera.enable_auto_exposure: true
+    depth_module.enable_auto_exposure: true
