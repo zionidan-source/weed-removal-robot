@@ -6,11 +6,11 @@ yolo_detection_node:
     model_path: "/home/daniel/ros2_workspaces/weed_removal_robot.ws/models/Rocky6.pt"
 
     # Minimum confidence to accept a detection (0.0 - 1.0)
-    confidence_threshold: 0.5
+    confidence_threshold: 0.7
 
     # Process every Nth frame (1 = every frame, 5 = every 5th)
     # Recommended for CPU: 5-10
-    process_every_n_frames: 5
+    process_every_n_frames: 4
 
     # Input topic (should match your RealSense color topic)
     input_image_topic: "/camera/camera/color/image_raw"
