@@ -129,56 +129,57 @@ class YoloDetectionNode(Node):
         # Publish debug image with masks drawn
         self._publish_debug_image(cv_image, results, detections, msg.header)
 
-    # ─────────────────────────────────────────────────────────────────
+#______________________________________________________________
     def _extract_detections(self, results, cv_image):
         """Parse YOLO results into a list of detection dicts."""
         detections = []
-        result = results[0]  # single image, one result
+        result = results[0]
 
-        # If no masks found, return empty
-        if result.masks is None:
+        if result.boxes is None or len(result.boxes) == 0:
             return detections
 
-        masks_data = result.masks.data.cpu().numpy()     # (N, H, W)
+        # Classes to exclude (crops we don't want to remove)
+        excluded_classes = {'Maize'}
+
         boxes = result.boxes
+        has_masks = result.masks is not None
 
         for i in range(len(boxes)):
             conf = float(boxes.conf[i])
             class_id = int(boxes.cls[i])
             class_name = self.model.names[class_id]
 
-            # Get binary mask for this detection
-            mask = masks_data[i]
-
-            # Resize mask to original image size if needed
-            if mask.shape[:2] != cv_image.shape[:2]:
-                mask = cv2.resize(
-                    mask, (cv_image.shape[1], cv_image.shape[0]),
-                    interpolation=cv2.INTER_NEAREST)
-
-            binary_mask = (mask > 0.5).astype(np.uint8)
-
-            # Compute centroid from mask moments
-            moments = cv2.moments(binary_mask)
-            if moments['m00'] == 0:
-                continue  # skip degenerate masks
-
-            centroid_u = moments['m10'] / moments['m00']  # pixel X
-            centroid_v = moments['m01'] / moments['m00']  # pixel Y
-
-            # Extract mask contour points (for the coordinator node)
-            contours, _ = cv2.findContours(
-                binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            # Take the largest contour
-            if not contours:
+            # Skip crops (e.g. Maize)
+            if class_name in excluded_classes:
                 continue
-            largest_contour = max(contours, key=cv2.contourArea)
 
-            # Simplify contour to reduce message size
-            epsilon = 0.02 * cv2.arcLength(largest_contour, True)
-            approx = cv2.approxPolyDP(largest_contour, epsilon, True)
-            contour_points = approx.reshape(-1, 2).tolist()
+            # Get bounding box coordinates: xyxy = [x1, y1, x2, y2]
+            xyxy = boxes.xyxy[i].cpu().numpy()
+            x1, y1, x2, y2 = xyxy
+            centroid_u = float((x1 + x2) / 2.0)
+            centroid_v = float((y1 + y2) / 2.0)
+
+            # If model has masks, refine centroid using mask moments
+            mask_points = []
+            if has_masks and i < len(result.masks.data):
+                mask = result.masks.data[i].cpu().numpy()
+                if mask.shape[:2] != cv_image.shape[:2]:
+                    mask = cv2.resize(
+                        mask, (cv_image.shape[1], cv_image.shape[0]),
+                        interpolation=cv2.INTER_NEAREST)
+                binary_mask = (mask > 0.5).astype(np.uint8)
+                moments = cv2.moments(binary_mask)
+                if moments['m00'] > 0:
+                    centroid_u = moments['m10'] / moments['m00']
+                    centroid_v = moments['m01'] / moments['m00']
+                    contours, _ = cv2.findContours(
+                        binary_mask, cv2.RETR_EXTERNAL,
+                        cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        largest = max(contours, key=cv2.contourArea)
+                        epsilon = 0.02 * cv2.arcLength(largest, True)
+                        approx = cv2.approxPolyDP(largest, epsilon, True)
+                        mask_points = approx.reshape(-1, 2).tolist()
 
             detections.append({
                 'class_name': class_name,
@@ -186,7 +187,7 @@ class YoloDetectionNode(Node):
                 'confidence': round(conf, 3),
                 'centroid_u': round(centroid_u, 2),
                 'centroid_v': round(centroid_v, 2),
-                'mask_points': contour_points,
+                'mask_points': mask_points,
             })
 
         return detections
