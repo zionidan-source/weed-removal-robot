@@ -1,5 +1,5 @@
 # RealSense D435i configuration for vision_pick
-realsense_camera:
+camera:
   ros__parameters:
     # ----- Stream config -----
     enable_color: true

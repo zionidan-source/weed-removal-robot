@@ -16,7 +16,8 @@ Publications:
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
-
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 from moveit_msgs.action import MoveGroup, ExecuteTrajectory
 from moveit_msgs.msg import (
     Constraints, PositionConstraint, MoveItErrorCodes, DisplayTrajectory
@@ -30,12 +31,15 @@ class UR5CoordinatorNode(Node):
 
     def __init__(self):
         super().__init__('ur5_coordinator_node')
+        self.cb_group = ReentrantCallbackGroup()
 
         # ── MoveIt2 action clients ───────────────────────────────────
         self.movegroup_client = ActionClient(
-            self, MoveGroup, '/move_action')
+            self, MoveGroup, '/move_action',
+            callback_group=self.cb_group)
         self.exec_client = ActionClient(
-            self, ExecuteTrajectory, '/execute_trajectory')
+            self, ExecuteTrajectory, '/execute_trajectory',
+            callback_group=self.cb_group)
 
         # ── RViz visualization ───────────────────────────────────────
         self.display_pub = self.create_publisher(
@@ -49,7 +53,8 @@ class UR5CoordinatorNode(Node):
         self.create_subscription(
             PointStamped,
             '/coordinator/target',
-            self._target_callback, 10)
+            self._target_callback, 10,
+            callback_group=self.cb_group)
 
         # ── MoveIt2 config (same as your go_to_xyz.py) ──────────────
         self.group_name = 'ur_manipulator'
@@ -191,8 +196,8 @@ class UR5CoordinatorNode(Node):
         req.group_name                    = self.group_name
         req.allowed_planning_time         = 5.0
         req.num_planning_attempts         = 5
-        req.max_velocity_scaling_factor   = 0.2
-        req.max_acceleration_scaling_factor = 0.2
+        req.max_velocity_scaling_factor   = 0.1
+        req.max_acceleration_scaling_factor = 0.1
 
         # Position constraint: 5mm sphere around the target
         pc = PositionConstraint()
@@ -227,8 +232,10 @@ class UR5CoordinatorNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = UR5CoordinatorNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

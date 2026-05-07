@@ -39,7 +39,7 @@ def generate_launch_description():
     realsense_node = Node(
         package='realsense2_camera',
         executable='realsense2_camera_node',
-        name='realsense_camera',
+        name='camera',
         namespace='camera',
         parameters=[os.path.join(pkg_dir, 'config', 'realsense_params.yaml')],
         output='screen',
@@ -57,11 +57,11 @@ def generate_launch_description():
         name='camera_to_base_tf',
         arguments=[
             # x     y     z       (translation in meters)
-            '0.0', '0.3', '0.5',
+            '0.0', '0.2', '0.0',
             # qx    qy    qz    qw   (rotation quaternion)
             '0.0', '0.0', '0.0', '1.0',
             # parent_frame   child_frame
-            'base_link', 'camera_color_optical_frame',
+            'base_link', 'camera_link',
         ],
         output='screen',
     )

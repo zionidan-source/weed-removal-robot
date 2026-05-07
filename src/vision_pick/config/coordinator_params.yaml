@@ -6,7 +6,7 @@ coordinator_node:
     camera_frame: "camera_color_optical_frame"
 
     # UR5 reach limit (meters) — points beyond this are held in queue
-    max_reach_m: 0.85
+    max_reach_m: 0.75
 
     # Valid depth range (meters) — reject readings outside this
     min_depth_m: 0.1
