@@ -30,7 +30,7 @@ from std_msgs.msg import String
 class UR5CoordinatorNode(Node):
 
     def __init__(self):
-        super().__init__('ur5_coordinator_node')
+        super().__init__('ur5_node')
         self.cb_group = ReentrantCallbackGroup()
 
         # ── MoveIt2 action clients ───────────────────────────────────
@@ -69,7 +69,7 @@ class UR5CoordinatorNode(Node):
             'Waiting for targets on /coordinator/target ...')
 
     # ─────────────────────────────────────────────────────────────────
-    def _target_callback(self, msg: PointStamped):
+    async def _target_callback(self, msg: PointStamped):
         """Called when coordinator sends a new weed coordinate."""
 
         if self.busy:
@@ -87,7 +87,7 @@ class UR5CoordinatorNode(Node):
             f'in frame "{msg.header.frame_id}"')
 
         self.busy = True
-        success = self._plan_confirm_execute(x, y, z)
+        success = await self._plan_confirm_execute(x, y, z)
         self.busy = False
 
         # Publish feedback to coordinator
@@ -102,7 +102,7 @@ class UR5CoordinatorNode(Node):
         self.status_pub.publish(status_msg)
 
     # ─────────────────────────────────────────────────────────────────
-    def _plan_confirm_execute(self, x, y, z) -> bool:
+    async def _plan_confirm_execute(self, x, y, z) -> bool:
         """
         Plan with MoveIt2, show in RViz, ask for confirmation,
         then execute. Returns True on success, False otherwise.
@@ -122,18 +122,14 @@ class UR5CoordinatorNode(Node):
         self.get_logger().info(
             f'Planning to: ({x:.3f}, {y:.3f}, {z:.3f}) ...')
 
-        future = self.movegroup_client.send_goal_async(plan_goal)
-        rclpy.spin_until_future_complete(self, future)
+        goal_handle = await self.movegroup_client.send_goal_async(plan_goal)
 
-        goal_handle = future.result()
         if not goal_handle or not goal_handle.accepted:
             self.get_logger().error('Planning goal rejected')
             return False
 
-        result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-
-        mg_result = result_future.result().result
+        mg_result_response = await goal_handle.get_result_async()
+        mg_result = mg_result_response.result
         err = mg_result.error_code.val
 
         if err != MoveItErrorCodes.SUCCESS:
@@ -165,18 +161,14 @@ class UR5CoordinatorNode(Node):
         exec_goal.trajectory = planned_traj
 
         self.get_logger().info('Executing trajectory...')
-        exec_future = self.exec_client.send_goal_async(exec_goal)
-        rclpy.spin_until_future_complete(self, exec_future)
+        exec_handle = await self.exec_client.send_goal_async(exec_goal)
 
-        exec_handle = exec_future.result()
         if not exec_handle or not exec_handle.accepted:
             self.get_logger().error('ExecuteTrajectory goal rejected')
             return False
 
-        exec_res_future = exec_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, exec_res_future)
-
-        exec_result = exec_res_future.result().result
+        exec_res_response = await exec_handle.get_result_async()
+        exec_result = exec_res_response.result
         exec_err = exec_result.error_code.val
 
         if exec_err == MoveItErrorCodes.SUCCESS:

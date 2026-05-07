@@ -35,26 +35,56 @@ sudo apt install -y \
   ros-jazzy-ur-robot-driver
 ```
 
-## 4. Python Dependencies
+## 4. MoveIt2
+
+```bash
+sudo apt install -y ros-jazzy-moveit
+```
+
+## 5. Python Dependencies
 
 ```bash
 pip install ultralytics opencv-python-headless numpy
 ```
 
-## 5. Build the Workspace
+## 6. Clone and Build the Workspace
 
 ```bash
-cd ~/weed_removal_robot
+git clone git@github.com:zionidan-source/weed-removal-robot.ws.git ~/ros2_workspaces/weed_removal_robot.ws
+cd ~/ros2_workspaces/weed_removal_robot.ws
+source /opt/ros/jazzy/setup.bash
 colcon build
 source install/setup.bash
 ```
 
 Add to your `~/.bashrc` for convenience:
 ```bash
-echo "source ~/weed_removal_robot/install/setup.bash" >> ~/.bashrc
+echo "source ~/ros2_workspaces/weed_removal_robot.ws/install/setup.bash" >> ~/.bashrc
 ```
 
-## 6. Verify
+## 7. YOLO Model
+
+The `.pt` model files are not tracked in git (they are large). Copy or download them separately and pass the path at launch time:
+
+```bash
+ros2 launch vision_pick full_pipeline.launch.py model_path:=/path/to/your/model.pt
+```
+
+## 8. UR5 Robot Connection
+
+The UR5 requires the **ExternalControl URCap** to be installed and a program running on the pendant.
+
+```bash
+# Launch the UR5 driver (replace with your robot's IP)
+ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur5 robot_ip:=YOUR_ROBOT_IP
+```
+
+> **Note:** Only one `ur_robot_driver` instance can connect to the robot at a time.
+> If you see "another program is already controlling the robot", make sure no other
+> computer or terminal is running the driver. On the UR pendant: stop any running
+> programs and re-launch ExternalControl before reconnecting.
+
+## 9. Verify
 
 ```bash
 # Test camera

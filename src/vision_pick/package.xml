@@ -4,7 +4,7 @@
   <name>vision_pick</name>
   <version>0.1.0</version>
   <description>RealSense camera config, YOLO weed detection, and pick coordinator</description>
-  <maintainer email="dev@example.com">developer</maintainer>
+  <maintainer email="Daniel.zioni8@gmail.com">Daniel Zioni</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>

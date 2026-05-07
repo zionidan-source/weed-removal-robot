@@ -4,12 +4,14 @@
   <name>ur5_control</name>
   <version>0.1.0</version>
   <description>UR5 arm control — receives pick coordinates and executes motion</description>
-  <maintainer email="dev@example.com">developer</maintainer>
+  <maintainer email="Daniel.zioni8@gmail.com">Daniel Zioni</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>moveit_msgs</depend>
+  <depend>shape_msgs</depend>
 
   <buildtool_depend>ament_python</buildtool_depend>
 

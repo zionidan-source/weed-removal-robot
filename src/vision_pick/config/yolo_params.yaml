@@ -3,7 +3,7 @@ yolo_detection_node:
   ros__parameters:
     # Path to your trained YOLOv11 segmentation model
     # Example: "/home/user/models/weed_best.pt"
-    model_path: "/home/daniel/ros2_workspaces/weed_removal_robot.ws/models/Rocky7.pt"
+    model_path: ""  # Override via launch arg: model_path:=/path/to/model.pt
 
     # Minimum confidence to accept a detection (0.0 - 1.0)
     confidence_threshold: 0.7
