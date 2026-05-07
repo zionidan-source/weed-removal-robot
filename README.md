@@ -46,7 +46,7 @@ Autonomous weed detection and removal system using a UR5 robotic arm, Intel Real
 
 ```bash
 # 1. Clone and build
-cd ~/ros2_workspaces/weed_removal_robot.ws
+cd ~/ros2_workspaces/weed_removal_robot_ws
 colcon build
 source install/setup.bash
 

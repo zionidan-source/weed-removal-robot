@@ -50,8 +50,8 @@ pip install ultralytics opencv-python-headless numpy
 ## 6. Clone and Build the Workspace
 
 ```bash
-git clone git@github.com:zionidan-source/weed-removal-robot.ws.git ~/ros2_workspaces/weed_removal_robot.ws
-cd ~/ros2_workspaces/weed_removal_robot.ws
+git clone git@github.com:zionidan-source/weed-removal-robot.ws.git ~/ros2_workspaces/weed_removal_robot_ws
+cd ~/ros2_workspaces/weed_removal_robot_ws
 source /opt/ros/jazzy/setup.bash
 colcon build
 source install/setup.bash
@@ -59,7 +59,7 @@ source install/setup.bash
 
 Add to your `~/.bashrc` for convenience:
 ```bash
-echo "source ~/ros2_workspaces/weed_removal_robot.ws/install/setup.bash" >> ~/.bashrc
+echo "source ~/ros2_workspaces/weed_removal_robot_ws/install/setup.bash" >> ~/.bashrc
 ```
 
 ## 7. YOLO Model
