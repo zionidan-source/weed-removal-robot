@@ -2,7 +2,7 @@
 ur5_node:
   ros__parameters:
     # Your UR5's IP address on the network
-    robot_ip: "192.168.1.100"
+    robot_ip: "192.168.1.101"
 
     # Motion parameters
     move_speed: 0.25          # m/s

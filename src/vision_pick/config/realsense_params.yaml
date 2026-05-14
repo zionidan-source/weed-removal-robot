@@ -16,8 +16,8 @@ camera:
     # ----- Depth -> Color alignment -----
     align_depth.enable: true
 
-    # ----- Point cloud OFF -----
-    pointcloud.enable: false
+    # ----- Point cloud on -----
+    pointcloud.enable: true
 
     # ----- Post-processing filters for cleaner depth -----
     decimation_filter.enable: false
