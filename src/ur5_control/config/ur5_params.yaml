@@ -1,9 +1,12 @@
-# UR5 Control Node parameters
+# UR5 Node parameters
 ur5_node:
   ros__parameters:
-    # Your UR5's IP address on the network
-    robot_ip: "192.168.1.101"
+    # Set to false when launched from full_pipeline.launch.py (no stdin).
+    # Set to true when running standalone in a terminal for manual approval.
+    require_confirmation: false
 
-    # Motion parameters
-    move_speed: 0.25          # m/s
-    move_acceleration: 0.5    # m/s²
+    # MoveIt2 planning parameters
+    allowed_planning_time: 5.0
+    num_planning_attempts: 5
+    max_velocity_scaling_factor: 0.1
+    max_acceleration_scaling_factor: 0.1

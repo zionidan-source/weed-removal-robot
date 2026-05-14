@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-UR5 Coordinator Node
-====================
+UR5 Node
+========
 Bridges the vision coordinator and MoveIt2.
 Subscribes to /coordinator/target, plans a trajectory with MoveIt2,
-asks for manual confirmation, executes, then publishes status feedback.
+optionally asks for manual confirmation, executes, then publishes status.
 
 Subscriptions:
     /coordinator/target  (geometry_msgs/PointStamped)  — 3D target in base_link frame
 
 Publications:
     /ur5/status          (std_msgs/String)              — "done" or "error"
+
+Parameters (see ur5_params.yaml):
+    require_confirmation          (bool, default True)  — prompt before executing
+    allowed_planning_time         (float, default 5.0)
+    num_planning_attempts         (int,   default 5)
+    max_velocity_scaling_factor   (float, default 0.1)
+    max_acceleration_scaling_factor (float, default 0.1)
 """
 
 import rclpy
@@ -27,11 +34,29 @@ from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import String
 
 
-class UR5CoordinatorNode(Node):
+class UR5Node(Node):
 
     def __init__(self):
         super().__init__('ur5_node')
         self.cb_group = ReentrantCallbackGroup()
+
+        # ── Parameters ───────────────────────────────────────────────
+        self.declare_parameter('require_confirmation', True)
+        self.declare_parameter('allowed_planning_time', 5.0)
+        self.declare_parameter('num_planning_attempts', 5)
+        self.declare_parameter('max_velocity_scaling_factor', 0.1)
+        self.declare_parameter('max_acceleration_scaling_factor', 0.1)
+
+        self.require_confirmation = self.get_parameter('require_confirmation') \
+            .get_parameter_value().bool_value
+        self.allowed_planning_time = self.get_parameter('allowed_planning_time') \
+            .get_parameter_value().double_value
+        self.num_planning_attempts = self.get_parameter('num_planning_attempts') \
+            .get_parameter_value().integer_value
+        self.max_velocity_scaling_factor = self.get_parameter('max_velocity_scaling_factor') \
+            .get_parameter_value().double_value
+        self.max_acceleration_scaling_factor = self.get_parameter('max_acceleration_scaling_factor') \
+            .get_parameter_value().double_value
 
         # ── MoveIt2 action clients ───────────────────────────────────
         self.movegroup_client = ActionClient(
@@ -56,16 +81,15 @@ class UR5CoordinatorNode(Node):
             self._target_callback, 10,
             callback_group=self.cb_group)
 
-        # ── MoveIt2 config (same as your go_to_xyz.py) ──────────────
+        # ── MoveIt2 config ───────────────────────────────────────────
         self.group_name = 'ur_manipulator'
-        self.base_frame  = 'base_link'
-        self.ee_link     = 'tool0'
+        self.base_frame = 'base_link'
+        self.ee_link    = 'tool0'
 
-        # ── Guard: ignore new targets while arm is busy ──────────────
         self.busy = False
 
         self.get_logger().info(
-            'UR5 coordinator node ready. '
+            f'UR5 node ready (require_confirmation={self.require_confirmation}). '
             'Waiting for targets on /coordinator/target ...')
 
     # ─────────────────────────────────────────────────────────────────
@@ -87,25 +111,27 @@ class UR5CoordinatorNode(Node):
             f'in frame "{msg.header.frame_id}"')
 
         self.busy = True
-        success = await self._plan_confirm_execute(x, y, z)
+        result = await self._plan_confirm_execute(x, y, z)
         self.busy = False
 
-        # Publish feedback to coordinator
         status_msg = String()
-        if success:
+        if result is True:
             status_msg.data = 'done'
             self.get_logger().info('Move complete — publishing "done"')
+        elif result == 'declined':
+            status_msg.data = 'declined'
+            self.get_logger().info('Execution declined — publishing "declined"')
         else:
             status_msg.data = 'error'
-            self.get_logger().warn('Move failed or cancelled — publishing "error"')
+            self.get_logger().warn('Move failed — publishing "error"')
 
         self.status_pub.publish(status_msg)
 
     # ─────────────────────────────────────────────────────────────────
-    async def _plan_confirm_execute(self, x, y, z) -> bool:
+    async def _plan_confirm_execute(self, x, y, z):
         """
-        Plan with MoveIt2, show in RViz, ask for confirmation,
-        then execute. Returns True on success, False otherwise.
+        Plan with MoveIt2, show in RViz, optionally confirm, then execute.
+        Returns True on success, 'declined' if user pressed n, False on failure.
         """
 
         # ── Wait for MoveIt2 servers ─────────────────────────────────
@@ -119,8 +145,7 @@ class UR5CoordinatorNode(Node):
 
         # ── Step 1: Plan only ────────────────────────────────────────
         plan_goal = self._build_movegroup_goal(x, y, z, plan_only=True)
-        self.get_logger().info(
-            f'Planning to: ({x:.3f}, {y:.3f}, {z:.3f}) ...')
+        self.get_logger().info(f'Planning to: ({x:.3f}, {y:.3f}, {z:.3f}) ...')
 
         goal_handle = await self.movegroup_client.send_goal_async(plan_goal)
 
@@ -133,8 +158,7 @@ class UR5CoordinatorNode(Node):
         err = mg_result.error_code.val
 
         if err != MoveItErrorCodes.SUCCESS:
-            self.get_logger().error(
-                f'Planning failed — MoveIt error code: {err}')
+            self.get_logger().error(f'Planning failed — MoveIt error code: {err}')
             return False
 
         planned_traj = mg_result.planned_trajectory
@@ -148,13 +172,14 @@ class UR5CoordinatorNode(Node):
         self.get_logger().info(
             'Plan found. Check RViz (/display_planned_path) to preview.')
 
-        # ── Step 3: Manual confirmation ──────────────────────────────
-        # NOTE: Remove this block later when running fully autonomous
-        print(f'\n  Target: x={x:.3f}  y={y:.3f}  z={z:.3f}')
-        ans = input('  Execute this trajectory? [y/N]: ').strip().lower()
-        if ans not in ('y', 'yes'):
-            self.get_logger().info('Execution cancelled by user.')
-            return False
+        # ── Step 3: Confirmation ─────────────────────────────────────
+        if self.require_confirmation:
+            self.get_logger().info(
+                f'Target: x={x:.3f}  y={y:.3f}  z={z:.3f}')
+            ans = input('  Execute this trajectory? [y/N]: ').strip().lower()
+            if ans not in ('y', 'yes'):
+                self.get_logger().info('Execution cancelled by user.')
+                return 'declined'
 
         # ── Step 4: Execute trajectory ───────────────────────────────
         exec_goal = ExecuteTrajectory.Goal()
@@ -181,24 +206,24 @@ class UR5CoordinatorNode(Node):
 
     # ─────────────────────────────────────────────────────────────────
     def _build_movegroup_goal(self, x, y, z, plan_only: bool) -> MoveGroup.Goal:
-        """Build a MoveGroup goal for a position target (same as go_to_xyz.py)."""
+        """Build a MoveGroup goal for a position target."""
         goal = MoveGroup.Goal()
         req  = goal.request
 
-        req.group_name                    = self.group_name
-        req.allowed_planning_time         = 5.0
-        req.num_planning_attempts         = 5
-        req.max_velocity_scaling_factor   = 0.1
-        req.max_acceleration_scaling_factor = 0.1
+        req.group_name                      = self.group_name
+        req.allowed_planning_time           = self.allowed_planning_time
+        req.num_planning_attempts           = self.num_planning_attempts
+        req.max_velocity_scaling_factor     = self.max_velocity_scaling_factor
+        req.max_acceleration_scaling_factor = self.max_acceleration_scaling_factor
 
-        # Position constraint: 5mm sphere around the target
+        # Position constraint: 5 mm sphere around the target
         pc = PositionConstraint()
         pc.header.frame_id = self.base_frame
         pc.link_name       = self.ee_link
 
         sphere = SolidPrimitive()
         sphere.type       = SolidPrimitive.SPHERE
-        sphere.dimensions = [0.005]  # 5mm tolerance
+        sphere.dimensions = [0.005]
 
         pose = PoseStamped()
         pose.header.frame_id    = self.base_frame
@@ -223,7 +248,7 @@ class UR5CoordinatorNode(Node):
 # ─────────────────────────────────────────────────────────────────────
 def main(args=None):
     rclpy.init(args=args)
-    node = UR5CoordinatorNode()
+    node = UR5Node()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:

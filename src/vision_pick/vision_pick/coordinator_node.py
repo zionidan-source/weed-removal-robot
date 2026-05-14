@@ -44,6 +44,7 @@ class CoordinatorNode(Node):
         self.declare_parameter('max_depth_m', 1.5)
         self.declare_parameter('duplicate_distance_m', 0.03)
         self.declare_parameter('depth_sample_radius_px', 5)
+        self.declare_parameter('dispatch_timeout_sec', 60.0)
 
         # ── Read parameters ─────────────────────────────────────────
         self.robot_base_frame = self.get_parameter('robot_base_frame') \
@@ -60,6 +61,8 @@ class CoordinatorNode(Node):
             .get_parameter_value().double_value
         self.depth_sample_radius = self.get_parameter('depth_sample_radius_px') \
             .get_parameter_value().integer_value
+        self.dispatch_timeout_sec = self.get_parameter('dispatch_timeout_sec') \
+            .get_parameter_value().double_value
 
         # ── Internal state ──────────────────────────────────────────
         self.bridge = CvBridge()
@@ -67,6 +70,9 @@ class CoordinatorNode(Node):
         self.latest_depth_image = None      # filled by depth callback
         self.pick_queue = []                # list of PointStamped (base frame)
         self.arm_busy = False               # True while UR5 is executing
+        self._dispatch_timer = None         # one-shot timeout watchdog
+        self.current_target = None          # target currently dispatched to UR5
+        self.declined_positions = []        # positions skipped by user this session
 
         # ── TF2 listener ────────────────────────────────────────────
         self.tf_buffer = tf2_ros.Buffer()
@@ -221,19 +227,37 @@ class CoordinatorNode(Node):
             # If arm is idle, send the next target immediately
             if not self.arm_busy:
                 self._send_next_target()
+        elif detections:
+            self.get_logger().info(
+                f'Received {len(detections)} detection(s) — '
+                'all filtered (depth/reach/duplicate/declined).')
 
     def _ur5_status_callback(self, msg: String):
         """Handle feedback from the UR5 node."""
+        if self._dispatch_timer is not None:
+            self._dispatch_timer.cancel()
+            self._dispatch_timer = None
+
         status = msg.data.strip().lower()
 
         if status == 'done':
             self.get_logger().info('UR5 reports: move complete.')
+            self.current_target = None
+            self.arm_busy = False
+            self._send_next_target()
+        elif status == 'declined':
+            self.get_logger().info(
+                'UR5 reports: user declined. Adding position to skip list.')
+            if self.current_target is not None:
+                self.declined_positions.append(self.current_target)
+            self.current_target = None
             self.arm_busy = False
             self._send_next_target()
         elif status == 'error':
             self.get_logger().warn(
                 'UR5 reports: error. Skipping current target, '
                 'sending next.')
+            self.current_target = None
             self.arm_busy = False
             self._send_next_target()
         else:
@@ -325,15 +349,19 @@ class CoordinatorNode(Node):
 
     def _is_duplicate(self, new_point):
         """
-        Check if a point is too close to an existing queue entry.
-        Prevents adding the same weed multiple times across frames.
+        Check if a point is too close to any queued, currently dispatched,
+        or previously declined position.
         """
-        for queued in self.pick_queue:
-            dx = new_point.point.x - queued.point.x
-            dy = new_point.point.y - queued.point.y
-            dz = new_point.point.z - queued.point.z
-            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-            if dist < self.duplicate_dist:
+        candidates = list(self.pick_queue)
+        if self.current_target is not None:
+            candidates.append(self.current_target)
+        candidates.extend(self.declined_positions)
+
+        for pt in candidates:
+            dx = new_point.point.x - pt.point.x
+            dy = new_point.point.y - pt.point.y
+            dz = new_point.point.z - pt.point.z
+            if math.sqrt(dx * dx + dy * dy + dz * dz) < self.duplicate_dist:
                 return True
         return False
 
@@ -345,6 +373,7 @@ class CoordinatorNode(Node):
             return
 
         target = self.pick_queue.pop(0)
+        self.current_target = target
         self.arm_busy = True
 
         self.target_pub.publish(target)
@@ -352,6 +381,22 @@ class CoordinatorNode(Node):
             f'Sent target to UR5: ({target.point.x:.3f}, '
             f'{target.point.y:.3f}, {target.point.z:.3f}). '
             f'Remaining in queue: {len(self.pick_queue)}')
+
+        if self._dispatch_timer is not None:
+            self._dispatch_timer.cancel()
+        self._dispatch_timer = self.create_timer(
+            self.dispatch_timeout_sec, self._dispatch_timeout_callback)
+
+    def _dispatch_timeout_callback(self):
+        """Reset busy flag if UR5 never reports status after dispatching."""
+        self._dispatch_timer.cancel()
+        self._dispatch_timer = None
+        self.current_target = None
+        self.get_logger().warn(
+            f'No UR5 status after {self.dispatch_timeout_sec:.0f}s — '
+            'resetting busy flag and retrying next target.')
+        self.arm_busy = False
+        self._send_next_target()
 
     def _publish_status(self):
         """Periodically publish busy state and queue size."""

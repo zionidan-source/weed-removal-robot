@@ -17,3 +17,6 @@ coordinator_node:
 
     # Radius (pixels) around centroid to sample depth values
     depth_sample_radius_px: 5
+
+    # Seconds to wait for /ur5/status before resetting busy flag
+    dispatch_timeout_sec: 60.0

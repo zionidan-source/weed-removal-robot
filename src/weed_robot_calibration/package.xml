@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>weed_robot_calibration</name>
+  <version>0.1.0</version>
+  <description>Hand-eye calibration pipeline for UR5 + RealSense D435i</description>
+  <maintainer email="Daniel.zioni8@gmail.com">Daniel Zioni</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>tf2_ros</depend>
+  <depend>realsense2_camera</depend>
+  <depend>ur_robot_driver</depend>
+  <depend>ur_moveit_config</depend>
+
+  <!-- External packages — clone into workspace before building:
+       https://github.com/ycheng517/easy_handeye2.git  (branch: jazzy)
+       https://github.com/JMU-ROBOTICS-VIVA/ros2_aruco.git -->
+  <exec_depend>easy_handeye2</exec_depend>
+  <exec_depend>ros2_aruco</exec_depend>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

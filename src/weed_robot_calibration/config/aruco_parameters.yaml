@@ -1,0 +1,14 @@
+# ArUco detection parameters for hand-eye calibration
+#
+# Print an ArUco marker from the DICT_5X5_250 dictionary (ID 1, 7 cm)
+# and mount it rigidly on the UR5 end-effector (tool0 flange).
+# Adjust marker_size to match your printed marker exactly.
+#
+aruco_node:
+  ros__parameters:
+    image_topic: /camera/camera/color/image_raw
+    camera_info_topic: /camera/camera/color/camera_info
+    marker_size: 0.078            # metres — must match your printed marker
+    aruco_dictionary_id: DICT_5X5_250
+    marker_id: 1
+    use_depth_for_pose_estimation: false
