@@ -3,7 +3,7 @@ ur5_node:
   ros__parameters:
     # Set to false when launched from full_pipeline.launch.py (no stdin).
     # Set to true when running standalone in a terminal for manual approval.
-    require_confirmation: false
+    require_confirmation: true
 
     # MoveIt2 planning parameters
     allowed_planning_time: 5.0

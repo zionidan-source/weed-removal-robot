@@ -1,7 +1,13 @@
 """
 Full pipeline launch file
 ==========================
-Launches: RealSense D435i, static TF, YOLO detection, coordinator, UR5 node.
+Launches: RealSense D435i, static TF, YOLO detection, coordinator.
+
+UR5 node is launched separately so it can run with stdin attached
+(required for require_confirmation=True).  Run it with:
+
+    ros2 run ur5_control ur5_node --ros-args --params-file \
+        ~/ros2_workspaces/weed_removal_robot_ws/src/ur5_control/config/ur5_params.yaml
 
 Usage (no arguments required):
     ros2 launch vision_pick full_pipeline.launch.py
@@ -10,15 +16,7 @@ Override examples:
     ros2 launch vision_pick full_pipeline.launch.py model_path:=/path/to/model.pt
     ros2 launch vision_pick full_pipeline.launch.py confidence_threshold:=0.6
 
-NOTE: ur5_node is included here with require_confirmation:=false (set in
-ur5_params.yaml), so it auto-executes trajectories after RViz preview.
-To get per-move manual approval, set require_confirmation: true in
-ur5_params.yaml and run ur5_node in a separate terminal with stdin attached:
-    ros2 run ur5_control ur5_node --ros-args --params-file \\
-        ~/ros2_workspaces/weed_removal_robot_ws/src/ur5_control/config/ur5_params.yaml
-
-NOTE: The static TF (base_link → camera_link) uses placeholder values.
-Replace after running:  ros2 launch weed_robot_calibration calibrate.launch.py
+NOTE: The static TF (base_link → camera_link) is baked-in from hand-eye calibration.
 """
 
 import os
@@ -33,7 +31,6 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
 
     pkg_dir = get_package_share_directory('vision_pick')
-    ur5_pkg_dir = get_package_share_directory('ur5_control')
 
     # ── Launch arguments ────────────────────────────────────────────────
     model_path_arg = DeclareLaunchArgument(
@@ -48,7 +45,7 @@ def generate_launch_description():
 
     process_every_n_arg = DeclareLaunchArgument(
         'process_every_n_frames',
-        default_value='4',
+        default_value='2',
         description='Run YOLO on every Nth frame')
 
     # ── 1. RealSense D435i ──────────────────────────────────────────────
@@ -63,22 +60,22 @@ def generate_launch_description():
     )
 
     # ── 2. Static TF: base_link → camera_link ──────────────────────────
-    #
-    #   *** PLACEHOLDER — replace x/y/z/qx/qy/qz/qw after calibration! ***
-    #
+    #   Values from hand-eye calibration (DANIILIDIS solver, 6.7 mm residual).
     static_tf_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='camera_to_base_tf',
+        name='base_to_camera_link_tf',
         arguments=[
-            # x     y     z       (translation in meters)
-            '0.0', '0.2', '0.0',
-            # qx    qy    qz    qw   (rotation quaternion)
-            '0.0', '0.0', '0.0', '1.0',
-            # parent_frame   child_frame
-            'base_link', 'camera_link',
+            '--x', '-0.940389',
+            '--y', '0.832932',
+            '--z', '0.104916',
+            '--qx', '-0.010102',
+            '--qy', '-0.006404',
+            '--qz', '-0.415715',
+            '--qw', '0.909416',
+            '--frame-id', 'base_link',
+            '--child-frame-id', 'camera_link',
         ],
-        output='screen',
     )
 
     # ── 3. YOLO Detection Node ──────────────────────────────────────────
@@ -108,17 +105,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    # ── 5. UR5 Node ─────────────────────────────────────────────────────
-    ur5_node = Node(
-        package='ur5_control',
-        executable='ur5_node',
-        name='ur5_node',
-        parameters=[
-            os.path.join(ur5_pkg_dir, 'config', 'ur5_params.yaml'),
-        ],
-        output='screen',
-    )
-
     return LaunchDescription([
         model_path_arg,
         confidence_arg,
@@ -127,5 +113,4 @@ def generate_launch_description():
         static_tf_node,
         yolo_node,
         coordinator_node,
-        ur5_node,
     ])

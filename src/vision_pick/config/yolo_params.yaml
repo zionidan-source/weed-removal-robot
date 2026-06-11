@@ -10,7 +10,7 @@ yolo_detection_node:
 
     # Process every Nth frame (1 = every frame, 5 = every 5th)
     # Recommended for CPU: 5-10
-    process_every_n_frames: 4
+    process_every_n_frames: 2
 
     # Input topic (should match your RealSense color topic)
     input_image_topic: "/camera/camera/color/image_raw"
