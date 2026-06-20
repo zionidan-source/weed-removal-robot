@@ -9,12 +9,14 @@ Subscriptions:
     /yolo/detections                                (std_msgs/String)
     /camera/camera/aligned_depth_to_color/image_raw (sensor_msgs/Image)
     /camera/camera/color/camera_info                (sensor_msgs/CameraInfo)
-    /ur5/status                                     (std_msgs/String)
+    /ur5/status                                     (std_msgs/String)  ("done"/"declined"/"stopped"/"error")
+    /coordinator/select_target                      (std_msgs/Int32)
 
 Publications:
     /coordinator/target     (geometry_msgs/PointStamped)  → UR5 node
     /coordinator/busy       (std_msgs/Bool)               → drive controller
     /coordinator/queue_size (std_msgs/Int32)               → monitoring
+    /coordinator/candidates (std_msgs/String)             → UR5 node (JSON candidate list)
 """
 
 import json
@@ -45,6 +47,7 @@ class CoordinatorNode(Node):
         self.declare_parameter('duplicate_distance_m', 0.03)
         self.declare_parameter('depth_sample_radius_px', 5)
         self.declare_parameter('dispatch_timeout_sec', 60.0)
+        self.declare_parameter('auto_dispatch', False)
 
         # ── Read parameters ─────────────────────────────────────────
         self.robot_base_frame = self.get_parameter('robot_base_frame') \
@@ -63,15 +66,18 @@ class CoordinatorNode(Node):
             .get_parameter_value().integer_value
         self.dispatch_timeout_sec = self.get_parameter('dispatch_timeout_sec') \
             .get_parameter_value().double_value
+        self.auto_dispatch = self.get_parameter('auto_dispatch') \
+            .get_parameter_value().bool_value
 
         # ── Internal state ──────────────────────────────────────────
         self.bridge = CvBridge()
         self.camera_intrinsics = None       # filled by camera_info callback
         self.latest_depth_image = None      # filled by depth callback
-        self.pick_queue = []                # list of PointStamped (base frame)
+        self.pick_queue = []                # list of {'id': int, 'point': PointStamped}
+        self._next_id = 1                   # monotonically increasing candidate id counter
         self.arm_busy = False               # True while UR5 is executing
         self._dispatch_timer = None         # one-shot timeout watchdog
-        self.current_target = None          # target currently dispatched to UR5
+        self.current_target = None          # PointStamped currently dispatched to UR5
         self.declined_positions = []        # positions skipped by user this session
 
         # ── TF2 listener ────────────────────────────────────────────
@@ -85,6 +91,8 @@ class CoordinatorNode(Node):
             Bool, '/coordinator/busy', 10)
         self.queue_size_pub = self.create_publisher(
             Int32, '/coordinator/queue_size', 10)
+        self.candidates_pub = self.create_publisher(
+            String, '/coordinator/candidates', 10)
 
         # ── Subscribers ─────────────────────────────────────────────
         self.create_subscription(
@@ -107,13 +115,19 @@ class CoordinatorNode(Node):
             '/ur5/status',
             self._ur5_status_callback, 10)
 
+        self.create_subscription(
+            Int32,
+            '/coordinator/select_target',
+            self._select_target_callback, 10)
+
         # ── Periodic busy signal publisher ──────────────────────────
         self.create_timer(0.5, self._publish_status)
 
         self.get_logger().info(
             f'Coordinator ready. Robot frame: "{self.robot_base_frame}", '
             f'Camera frame: "{self.camera_frame}", '
-            f'Max reach: {self.max_reach}m')
+            f'Max reach: {self.max_reach}m, '
+            f'auto_dispatch={self.auto_dispatch}')
 
     # ─────────────────────────────────────────────────────────────────
     # CALLBACKS
@@ -208,8 +222,9 @@ class CoordinatorNode(Node):
             if self._is_duplicate(point_base):
                 continue
 
-            # ── Step 6: Add to queue ─────────────────────────────
-            self.pick_queue.append(point_base)
+            # ── Step 6: Add to queue with stable id ─────────────
+            self.pick_queue.append({'id': self._next_id, 'point': point_base})
+            self._next_id += 1
             new_points_added += 1
 
             self.get_logger().info(
@@ -219,13 +234,16 @@ class CoordinatorNode(Node):
 
         if new_points_added > 0:
             # Re-sort queue by Y coordinate (smallest first)
-            self.pick_queue.sort(key=lambda p: p.point.y)
+            self.pick_queue.sort(key=lambda entry: entry['point'].point.y)
             self.get_logger().info(
                 f'Added {new_points_added} target(s). '
                 f'Queue size: {len(self.pick_queue)}')
 
-            # If arm is idle, send the next target immediately
-            if not self.arm_busy:
+            # Publish updated candidate list regardless of mode
+            self._publish_candidates()
+
+            # In auto-dispatch mode, send the next target immediately if idle
+            if self.auto_dispatch and not self.arm_busy:
                 self._send_next_target()
         elif detections:
             self.get_logger().info(
@@ -244,7 +262,7 @@ class CoordinatorNode(Node):
             self.get_logger().info('UR5 reports: move complete.')
             self.current_target = None
             self.arm_busy = False
-            self._send_next_target()
+            self._advance()
         elif status == 'declined':
             self.get_logger().info(
                 'UR5 reports: user declined. Adding position to skip list.')
@@ -252,16 +270,44 @@ class CoordinatorNode(Node):
                 self.declined_positions.append(self.current_target)
             self.current_target = None
             self.arm_busy = False
-            self._send_next_target()
+            self._advance()
+        elif status == 'stopped':
+            self.get_logger().warn(
+                'UR5 reports: stopped by user. Clearing current target.')
+            self.current_target = None
+            self.arm_busy = False
+            self._advance()
         elif status == 'error':
             self.get_logger().warn(
                 'UR5 reports: error. Skipping current target, '
                 'sending next.')
             self.current_target = None
             self.arm_busy = False
-            self._send_next_target()
+            self._advance()
         else:
             self.get_logger().debug(f'UR5 status: {status}')
+
+    def _select_target_callback(self, msg: Int32):
+        """Operator (via UR5 node) picked a candidate id to dispatch."""
+        if self.arm_busy:
+            self.get_logger().warn(
+                f'Received target selection (id={msg.data}) while arm is '
+                'busy — ignoring.')
+            return
+
+        target_id = msg.data
+        for i, entry in enumerate(self.pick_queue):
+            if entry['id'] == target_id:
+                selected = self.pick_queue.pop(i)
+                self.get_logger().info(
+                    f'Operator selected target id={target_id}.')
+                self._dispatch_target(selected)
+                return
+
+        self.get_logger().warn(
+            f'Selected target id={target_id} not found in queue '
+            '(stale selection?) — republishing candidates.')
+        self._publish_candidates()
 
     # ─────────────────────────────────────────────────────────────────
     # CORE LOGIC
@@ -352,7 +398,7 @@ class CoordinatorNode(Node):
         Check if a point is too close to any queued, currently dispatched,
         or previously declined position.
         """
-        candidates = list(self.pick_queue)
+        candidates = [entry['point'] for entry in self.pick_queue]
         if self.current_target is not None:
             candidates.append(self.current_target)
         candidates.extend(self.declined_positions)
@@ -365,27 +411,66 @@ class CoordinatorNode(Node):
                 return True
         return False
 
-    def _send_next_target(self):
-        """Pop the first target from the queue and send it to the UR5."""
-        if not self.pick_queue:
-            self.get_logger().info('Queue empty — arm is idle.')
-            self.arm_busy = False
-            return
+    def _publish_candidates(self):
+        """Publish the current pick_queue as a JSON array of candidates."""
+        candidates = [
+            {
+                'id': entry['id'],
+                'x': round(entry['point'].point.x, 4),
+                'y': round(entry['point'].point.y, 4),
+                'z': round(entry['point'].point.z, 4),
+            }
+            for entry in self.pick_queue
+        ]
+        msg = String()
+        msg.data = json.dumps(candidates)
+        self.candidates_pub.publish(msg)
 
-        target = self.pick_queue.pop(0)
+    def _dispatch_target(self, entry):
+        """
+        Dispatch a single candidate entry ({'id', 'point'}) to the UR5 node.
+        Assumes the entry has already been removed from self.pick_queue.
+        """
+        target = entry['point']
         self.current_target = target
         self.arm_busy = True
 
         self.target_pub.publish(target)
         self.get_logger().info(
-            f'Sent target to UR5: ({target.point.x:.3f}, '
-            f'{target.point.y:.3f}, {target.point.z:.3f}). '
-            f'Remaining in queue: {len(self.pick_queue)}')
+            f'Sent target (id={entry["id"]}) to UR5: '
+            f'({target.point.x:.3f}, {target.point.y:.3f}, '
+            f'{target.point.z:.3f}). Remaining in queue: {len(self.pick_queue)}')
 
         if self._dispatch_timer is not None:
             self._dispatch_timer.cancel()
         self._dispatch_timer = self.create_timer(
             self.dispatch_timeout_sec, self._dispatch_timeout_callback)
+
+        # Candidate list shrank by one — notify immediately
+        self._publish_candidates()
+
+    def _send_next_target(self):
+        """Pop the first (auto-selected) target from the queue and dispatch it."""
+        if not self.pick_queue:
+            self.get_logger().info('Queue empty — arm is idle.')
+            self.arm_busy = False
+            self._publish_candidates()
+            return
+
+        entry = self.pick_queue.pop(0)
+        self._dispatch_target(entry)
+
+    def _advance(self):
+        """
+        Mode-aware "what to do next" after the arm becomes idle.
+        auto_dispatch=True : pop and dispatch the next queued target.
+        auto_dispatch=False: publish current candidates and wait for the
+                             operator (via /coordinator/select_target) to choose.
+        """
+        if self.auto_dispatch:
+            self._send_next_target()
+        else:
+            self._publish_candidates()
 
     def _dispatch_timeout_callback(self):
         """Reset busy flag if UR5 never reports status after dispatching."""
@@ -396,10 +481,10 @@ class CoordinatorNode(Node):
             f'No UR5 status after {self.dispatch_timeout_sec:.0f}s — '
             'resetting busy flag and retrying next target.')
         self.arm_busy = False
-        self._send_next_target()
+        self._advance()
 
     def _publish_status(self):
-        """Periodically publish busy state and queue size."""
+        """Periodically publish busy state, queue size, and candidates."""
         busy_msg = Bool()
         busy_msg.data = self.arm_busy or len(self.pick_queue) > 0
         self.busy_pub.publish(busy_msg)
@@ -407,6 +492,8 @@ class CoordinatorNode(Node):
         queue_msg = Int32()
         queue_msg.data = len(self.pick_queue)
         self.queue_size_pub.publish(queue_msg)
+
+        self._publish_candidates()
 
 
 # ─────────────────────────────────────────────────────────────────────

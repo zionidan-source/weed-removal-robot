@@ -60,19 +60,19 @@ def generate_launch_description():
     )
 
     # ── 2. Static TF: base_link → camera_link ──────────────────────────
-    #   Values from hand-eye calibration (DANIILIDIS solver, 6.7 mm residual).
+    #   Values from hand-eye calibration (PARK solver, 8.2 mm residual, June 2026).
     static_tf_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_to_camera_link_tf',
         arguments=[
-            '--x', '-0.940389',
-            '--y', '0.832932',
-            '--z', '0.104916',
-            '--qx', '-0.010102',
-            '--qy', '-0.006404',
-            '--qz', '-0.415715',
-            '--qw', '0.909416',
+            '--x', '-0.950370',
+            '--y', '0.828366',
+            '--z', '0.110722',
+            '--qx', '0.018165',
+            '--qy', '-0.012425',
+            '--qz', '-0.375054',
+            '--qw', '0.926742',
             '--frame-id', 'base_link',
             '--child-frame-id', 'camera_link',
         ],
